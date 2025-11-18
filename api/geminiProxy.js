@@ -1,6 +1,6 @@
-// Vercel Serverless Function
-const { GoogleGenAI, Modality, Type } = require('@google/genai');
-const cors = require('cors');
+// Vercel Serverless Function (ESM Syntax)
+import { GoogleGenAI, Modality, Type } from '@google/genai';
+import cors from 'cors';
 
 // Инициализируем CORS middleware
 const corsMiddleware = cors({ origin: true });
@@ -8,6 +8,9 @@ const corsMiddleware = cors({ origin: true });
 // Инициализируем Gemini API. Ключ API должен быть установлен как переменная окружения
 // в вашем Vercel проекте.
 const API_KEY = process.env.API_KEY;
+if (!API_KEY) {
+  console.error('API_KEY environment variable not set on the server.');
+}
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
 /**
@@ -25,15 +28,18 @@ const robustJsonParse = (jsonStr) => {
 
     try {
         const parsed = JSON.parse(cleanJsonStr);
+        // Добавим проверку, что это действительно массив строк
         if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
             return parsed;
         }
+        // Если структура не та, что ожидаем, возвращаем пустой массив
         return [];
     } catch (error) {
         console.error("Не удалось разобрать JSON строку:", cleanJsonStr, error);
         return [];
     }
 };
+
 
 /**
  * Распознает объекты на изображении.
@@ -147,7 +153,7 @@ const handleGenerateDesigns = async (payload) => {
 /**
  * Основная HTTP-функция, обрабатывающая все запросы от фронтенда.
  */
-module.exports = (req, res) => {
+export default function handler(req, res) {
     corsMiddleware(req, res, async () => {
         if (!API_KEY) {
             return res.status(500).json({ error: 'API_KEY environment variable not set on the server.' });
