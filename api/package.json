@@ -2,7 +2,5 @@
   "name": "api",
   "private": true,
   "type": "module",
-  "dependencies": {
-    "@google/genai": "^1.29.0"
-  }
+  "dependencies": {}
 }

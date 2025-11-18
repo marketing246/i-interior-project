@@ -1,11 +1,10 @@
-import { GoogleGenAI, Modality, Type } from '@google/genai';
-
-// Настройка для запуска на Edge Runtime (важно для обхода лимитов по времени)
+// Настройка для запуска на Edge Runtime
 export const config = {
   runtime: 'edge',
 };
 
 const API_KEY = process.env.API_KEY;
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 /**
  * Безопасно парсит JSON-строку.
@@ -30,17 +29,35 @@ const robustJsonParse = (jsonStr) => {
     }
 };
 
-const extractBase64FromResponse = (response) => {
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
+const extractBase64FromResponse = (data) => {
+  try {
+    const part = data.candidates?.[0]?.content?.parts?.[0];
+    if (part?.inlineData) {
       return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
     }
+  } catch (e) {
+    console.error("Ошибка извлечения изображения:", e);
   }
   return null;
+};
+
+async function callGemini(model, body) {
+  const response = await fetch(`${BASE_URL}/${model}:generateContent?key=${API_KEY}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini API Error (${response.status}): ${errorText}`);
+  }
+
+  return await response.json();
 }
 
 export default async function handler(req) {
-  // Обработка CORS вручную для Edge Runtime
+  // Обработка CORS
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       status: 200,
@@ -67,7 +84,6 @@ export default async function handler(req) {
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey: API_KEY });
     const { action, payload } = await req.json();
 
     if (!action || !payload) {
@@ -81,37 +97,39 @@ export default async function handler(req) {
 
     if (action === 'identifyObjects') {
         const { base64Image, mimeType } = payload;
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: {
+        const body = {
+            contents: [{
                 parts: [
                     { inlineData: { data: base64Image, mimeType: mimeType } },
-                    { text: `Проанализируй предоставленное изображение комнаты и определи основные, отдельные и редактируемые предметы дизайна интерьера. Перечисли их в виде JSON-массива строк. Примеры: 'диван', 'оконные шторы', 'кофейный столик', 'ковер'. Включай только те предметы, которые хорошо видны и могут быть реалистично отредактированы. Не включай структурные элементы, такие как стены, пол или потолок. Верни ТОЛЬКО JSON-массив, без какого-либо другого текста или форматирования markdown. Массив должен содержать от 3 до 8 элементов.` },
-                ],
-            },
-            config: {
+                    { text: `Проанализируй предоставленное изображение комнаты и определи основные, отдельные и редактируемые предметы дизайна интерьера. Перечисли их в виде JSON-массива строк. Примеры: 'диван', 'оконные шторы', 'кофейный столик', 'ковер'. Включай только те предметы, которые хорошо видны и могут быть реалистично отредактированы. Не включай структурные элементы, такие как стены, пол или потолок. Верни ТОЛЬКО JSON-массив, без какого-либо другого текста или форматирования markdown. Массив должен содержать от 3 до 8 элементов.` }
+                ]
+            }],
+            generationConfig: {
                 responseMimeType: "application/json",
-                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING, description: 'Редактируемый объект в комнате.' } },
-            },
-        });
-        resultData = { objects: robustJsonParse(response.text) };
+                responseSchema: { type: "ARRAY", items: { type: "STRING" } }
+            }
+        };
+        
+        const data = await callGemini('gemini-2.5-flash', body);
+        resultData = { objects: robustJsonParse(data.candidates?.[0]?.content?.parts?.[0]?.text || '[]') };
 
     } else if (action === 'identifyElements') {
         const { base64Image, mimeType } = payload;
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: {
+        const body = {
+            contents: [{
                 parts: [
                     { inlineData: { data: base64Image, mimeType: mimeType } },
-                    { text: `Проанализируй предоставленное изображение комнаты и определи основные структурные поверхности. Конкретно перечисли пол, потолок и любые отчетливые стены (например, 'левая стена', 'задняя стена', 'стена с окном'). Перечисли их в виде JSON-массива строк. Включай только 'пол', 'потолок' и описания стен. Верни ТОЛЬКО JSON-массив, без какого-либо другого текста или форматирования markdown. Массив должен содержать от 2 до 5 элементов.` },
-                ],
-            },
-            config: {
+                    { text: `Проанализируй предоставленное изображение комнаты и определи основные структурные поверхности. Конкретно перечисли пол, потолок и любые отчетливые стены (например, 'левая стена', 'задняя стена', 'стена с окном'). Перечисли их в виде JSON-массива строк. Включай только 'пол', 'потолок' и описания стен. Верни ТОЛЬКО JSON-массив, без какого-либо другого текста или форматирования markdown. Массив должен содержать от 2 до 5 элементов.` }
+                ]
+            }],
+            generationConfig: {
                 responseMimeType: "application/json",
-                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING, description: 'Основной структурный элемент в комнате (стена, пол, потолок).' } },
-            },
-        });
-        resultData = { elements: robustJsonParse(response.text) };
+                responseSchema: { type: "ARRAY", items: { type: "STRING" } }
+            }
+        };
+
+        const data = await callGemini('gemini-2.5-flash', body);
+        resultData = { elements: robustJsonParse(data.candidates?.[0]?.content?.parts?.[0]?.text || '[]') };
 
     } else if (action === 'generateDesigns') {
         const {
@@ -138,13 +156,16 @@ export default async function handler(req) {
             fullPrompt = `You are an expert interior designer. A user has provided an image of their room and a request. Your task is to preserve the overall style of the interior shown in the image. Keep the exact same architectural layout, windows, doors, and perspective of the room. Subtly enhance and improve the interior furnishings, color palette, lighting, and decor based on the user's request, while maintaining the original's core aesthetic. The final image should be a photorealistic rendering of the redesigned space. User's request: "${userPrompt}"`;
         }
 
+        parts.push({ text: fullPrompt });
+
+        const body = {
+            contents: [{ parts: parts }],
+        };
+
+        // Функция генерации одного дизайна
         const generateSingleDesign = async () => {
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-image',
-                contents: { parts: [...parts, { text: fullPrompt }] },
-                config: { responseModalities: [Modality.IMAGE] },
-            });
-            return extractBase64FromResponse(response);
+           const data = await callGemini('gemini-2.5-flash-image', body);
+           return extractBase64FromResponse(data);
         };
 
         const numberOfDesigns = isEditing || selectedObject ? 1 : 4;
